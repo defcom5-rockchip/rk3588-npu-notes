@@ -24,6 +24,37 @@ said 200 MHz, throughput implied ~470 MHz, and `vdd_npu` held 850 mV throughout.
 workload told the truth.** Output stayed correct in every configuration; this is a bad
 configuration, not damaged silicon, and it is fully reversible.
 
+## Correction (2026-08-15): the stock baseline was measurement-bound
+
+The 8.68 tok/s stock figure above was limited by the measurement environment, not the NPU.
+Re-measured clean on the same board and model (Qwen3-1.7B w8a8, decode tok/s straight from the
+RKLLM `PerfStat` counter, warm-up + 3 scored runs per condition):
+
+| condition | decode tok/s | vs recorded 8.68 |
+|---|---|---|
+| recorded stock | 8.68 | — |
+| clean: `performance` governor + quiesced desktop (default IRQ) | **10.6** | **+22%** |
+| + NPU IRQ (`37/38/39`) pinned to an A76 core | **11.2** | **+29%** |
+
+The dominant lever is the CPU governor plus quiescing the desktop (+22%); NPU interrupt
+affinity adds roughly another 5% — smaller here than on mainline, because this NPU runs at
+1 GHz rather than 200 MHz, so the fixed per-token interrupt cost is a smaller fraction of each
+token. **The phantom-overclock result is unaffected:** the +1100 MHz request was measured
+slower than stock under *identical* conditions, so the relative clamp stands; only the absolute
+stock ceiling was understated.
+
+A refinement to the gauge-disagreement note above: at a **valid in-table bin** (e.g. stock
+1000 MHz) `devfreq` and the workload *agree*. The three-way disagreement is specific to the
+**out-of-table request** (the +1100 MHz phantom-OC), where `devfreq` reports 1100 while ATF
+clamps the real rate below 1000. `available_frequencies` tops out at 1000 MHz, and that ceiling
+is the ATF-validated table refusing the out-of-range request.
+
+This independently reproduces, from the **BSP + LLM** side, the methodology in Igor Paunović's
+mainline `accel/rocket` DVFS RFC (linux-rockchip, Aug 2026): interrupt placement, CPU governor,
+and a busy SoC dominate NPU-throughput measurements, and `clk_summary` is unreliable for the
+SCMI-owned NPU clock — only the workload is honest. Two drivers (vendor `rknpu` vs mainline
+`rocket`), two workloads (LLM vs vision), same silicon truth.
+
 ## Are you affected?
 
 ```sh
